@@ -22,6 +22,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Windows.Forms;
 using Assistant.Core;
 using Assistant.HotKeys;
@@ -32,6 +33,31 @@ namespace Assistant.Scripts
 {
     public static class Commands
     {
+        private static int _lastLiftTypeId;
+        private static int _lastLiftId;
+        private static DressList _lastDressList;
+        private static DressList _lastUndressList;
+        private static bool _undressAll;
+        private static bool _undressLayer;
+
+        private static string[] abilities = new string[4] { "primary", "secondary", "stun", "disarm" };
+        private static string[] hands = new string[4] { "left", "right", "both", "hands" };
+        private static string[] virtues = new string[3] { "honor", "sacrifice", "valor" };
+        private static readonly Dictionary<string, ushort> PotionList = new Dictionary<string, ushort>()
+        {
+            {"heal", 3852},
+            {"cure", 3847},
+            {"refresh", 3851},
+            {"nightsight", 3846},
+            {"ns", 3846},
+            {"explosion", 3853},
+            {"strength", 3849},
+            {"str", 3849},
+            {"agility", 3848}
+        };
+
+        public static Dictionary<string, string> LocalVariables { get; set; } = new Dictionary<string, string>();
+
         public static void Register()
         {
             // Commands based on Actions.cs
@@ -115,6 +141,133 @@ namespace Assistant.Scripts
 
             //Interpreter.RegisterCommandHandler("ignore", AddIgnore);
             //Interpreter.RegisterCommandHandler("clearignore", ClearIgnore);
+
+            // IFTL Commands
+            Interpreter.RegisterCommandHandler("setlocalvar", SetLocalVar);
+            Interpreter.RegisterCommandHandler("declocalvar", DecrementLocalVar);
+            Interpreter.RegisterCommandHandler("inclocalvar", IncrementLocalVar);
+
+            Interpreter.RegisterCommandHandler("lootall", LootAll);
+            Interpreter.RegisterCommandHandler("opencorpses", OpenCorpses);
+            Interpreter.RegisterCommandHandler("fntm", FindAndTargetMobile);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="commands"></param>
+        /// <param name="vars"></param>
+        /// <param name="quiet"></param>
+        /// <param name="force"></param>
+        /// <returns></returns>
+        private static bool FindAndTargetMobile(string commands, Variable[] vars, bool quiet, bool force)
+        {
+            Mobile closest = null;
+            var closestDist = double.MaxValue;
+
+            //
+            Spell spell = int.TryParse(vars[0].AsString(), out int spellnum)
+                ? Spell.Get(spellnum)
+                : Spell.GetByName(vars[0].AsString());
+
+            if (spell != null)
+            {
+                spell.OnCast(new CastSpellFromMacro((ushort)spell.GetID()));
+            }
+
+            //
+            foreach (Mobile m in World.MobilesInRange(12).Where(x => (x.IsMonster || x.IsGhost) && x.Visible))
+            {
+                //
+                double dist = Utility.DistanceSqrt(m.Position, World.Player.Position);
+
+                //
+                if (dist < closestDist || closest == null)
+                {
+                    closestDist = dist;
+                    closest = m;
+                }
+            }
+
+            if (closest != null)
+            {
+                // Target it
+                Targeting.Target(closest.Serial);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Open Corpses
+        /// </summary>
+        /// <param name="commands"></param>
+        /// <param name="vars"></param>
+        /// <param name="quiet"></param>
+        /// <param name="force"></param>
+        /// <returns></returns>
+        private static bool OpenCorpses(string commands, Variable[] vars, bool quiet, bool force)
+        {
+            // Drop Click Every Corpse
+            Serial CorpseSerial;
+
+            // Find all corpses
+            foreach (Item item in World.Items.Values.Where(x => x.DisplayName.StartsWith("corpse")))
+            {
+                CorpseSerial = ((Item)item).Serial;
+
+                //
+                double dist = Utility.DistanceSqrt(item.Position, World.Player.Position);
+                if (dist < 3)
+                {
+                    // Double Click Corpse To Open Loot Window
+                    PlayerData.DoubleClick(CorpseSerial);
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="commands"></param>
+        /// <param name="vars"></param>
+        /// <param name="quiet"></param>
+        /// <param name="force"></param>
+        /// <returns></returns>
+        private static bool LootAll(string commands, Variable[] vars, bool quiet, bool force)
+        {
+            // Loop over all items in the world
+            foreach (Item item in World.Items.Values)
+            {
+                // Make sure they are in containers and that container is a Item (not the player)
+                if (item.Container != null && item.Container.GetType() == typeof(Item))
+                {
+                    // Make sure the parent container is a corpse
+                    if (((Item)item.Container).DisplayName != "corpse")
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    continue;
+                }
+
+                // Make sure the item is within reachable distance
+                double dist = Utility.DistanceSqrt(((Item)item.Container).Position, World.Player.Position);
+                if (dist < 3)
+                {
+                    // Lift Item
+                    LiftItem(item.Serial, item.Amount, false, false);
+
+                    // Drop In Backpack
+                    DragDropManager.Drop(item, World.Player.Backpack.Serial, new Point3D(-1, -1, 0));
+                }
+            }
+
+            return true;
         }
 
         private static bool AddIgnore(string commands, Variable[] vars, bool quiet, bool force)
@@ -140,8 +293,6 @@ namespace Assistant.Scripts
 
             return true;
         }
-
-        private static string[] virtues = new string[3] { "honor", "sacrifice", "valor" };
 
         private static bool Virtue(string command, Variable[] vars, bool quiet, bool force)
         {
@@ -194,6 +345,94 @@ namespace Assistant.Scripts
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Increment Local Variable
+        /// </summary>
+        /// <param name="command"></param>
+        /// <param name="vars"></param>
+        /// <param name="quiet"></param>
+        /// <param name="force"></param>
+        /// <returns></returns>
+        private static bool IncrementLocalVar(string command, Variable[] vars, bool quiet, bool force)
+        {
+            string Key = vars[0].AsString();
+            string Value = string.Empty;
+
+            // Add Local Variable
+            if (LocalVariables.TryGetValue(Key, out Value))
+            {
+                int iValue = 0;
+
+                // Try to get as integer
+                int.TryParse(Value, out iValue);
+
+                // Increment
+                iValue++;
+
+                // Add the value back to the local variable
+                LocalVariables[Key] = iValue.ToString();
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Decrement Local Variable
+        /// </summary>
+        /// <param name="command"></param>
+        /// <param name="vars"></param>
+        /// <param name="quiet"></param>
+        /// <param name="force"></param>
+        /// <returns></returns>
+        private static bool DecrementLocalVar(string command, Variable[] vars, bool quiet, bool force)
+        {
+            string Key = vars[0].AsString();
+            string Value = string.Empty;
+
+            // Add Local Variable
+            if (LocalVariables.TryGetValue(Key, out Value))
+            {
+                int iValue = 0;
+
+                // Try to get as integer
+                int.TryParse(Value, out iValue);
+
+                // Increment
+                iValue--;
+
+                // Add the value back to the local variable
+                LocalVariables[Key] = iValue.ToString();
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Set Local Variable
+        /// </summary>
+        /// <param name="command"></param>
+        /// <param name="vars"></param>
+        /// <param name="quiet"></param>
+        /// <param name="force"></param>
+        /// <returns></returns>
+        private static bool SetLocalVar(string command, Variable[] vars, bool quiet, bool force)
+        {
+            string Key = vars[0].AsString();
+            string Value = vars[1].AsString();
+
+            // Add Local Variable
+            if (LocalVariables.ContainsKey(Key))
+            {
+                LocalVariables[Key] = Value;
+            }
+            else
+            {
+                LocalVariables.Add(Key, Value);
+            }
+
+            return true;
         }
 
         private static bool SetVar(string command, Variable[] vars, bool quiet, bool force)
@@ -366,8 +605,6 @@ namespace Assistant.Scripts
             return false;
         }
 
-        private static string[] abilities = new string[4] {"primary", "secondary", "stun", "disarm"};
-
         private static bool SetAbility(string command, Variable[] vars, bool quiet, bool force)
         {
             if (vars.Length < 1 || !abilities.Contains(vars[0].AsString()))
@@ -404,8 +641,6 @@ namespace Assistant.Scripts
             return true;
         }
 
-        private static string[] hands = new string[4] {"left", "right", "both", "hands"};
-
         private static bool ClearHands(string command, Variable[] vars, bool quiet, bool force)
         {
             if (vars.Length == 0 || !hands.Contains(vars[0].AsString()))
@@ -434,7 +669,7 @@ namespace Assistant.Scripts
         {
             if (vars.Length == 0)
             {
-                throw new RunTimeError("Usage: dclicktype ('name of item'/'graphicID') [inrangecheck (true/false)/backpack] [hue]");
+                throw new RunTimeError("Usage: dclicktype ('name of item') OR (graphicID) [inrangecheck (true/false)/backpack]");
             }
 
             string gfxStr = vars[0].AsString();
@@ -444,15 +679,9 @@ namespace Assistant.Scripts
 
             bool inRangeCheck = false;
             bool backpack = false;
-            int hue = -1;
 
-            if (vars.Length > 1)
+            if (vars.Length == 2)
             {
-                if (vars.Length == 3)
-                {
-                    hue = vars[2].AsInt();
-                }
-
                 if (vars[1].AsString().IndexOf("pack", StringComparison.OrdinalIgnoreCase) > 0)
                 {
                     backpack = true;
@@ -466,7 +695,7 @@ namespace Assistant.Scripts
             // No graphic id, maybe searching by name?
             if (gfx == 0)
             {
-                items = CommandHelper.GetItemsByName(gfxStr, backpack, inRangeCheck, hue);
+                items = CommandHelper.GetItemsByName(gfxStr, backpack, inRangeCheck);
 
                 if (items.Count == 0) // no item found, search mobile by name
                 {
@@ -477,7 +706,7 @@ namespace Assistant.Scripts
             {
                 ushort id = Utility.ToUInt16(gfxStr, 0);
 
-                items = CommandHelper.GetItemsById(id, backpack, inRangeCheck, hue);
+                items = CommandHelper.GetItemsById(id, backpack, inRangeCheck);
                 
                 // Still no item? Mobile check!
                 if (items.Count == 0)
@@ -626,28 +855,15 @@ namespace Assistant.Scripts
             return true;
         }
 
-        private static int _lastLiftId;
 
-        private static bool LiftItem(string command, Variable[] vars, bool quiet, bool force)
+        private static bool LiftItem(Serial serial, ushort Amount, bool quiet, bool force)
         {
-            if (vars.Length < 1)
-            {
-                throw new RunTimeError("Usage: lift (serial) [amount]");
-            }
-
-            Serial serial = vars[0].AsSerial();
-
             if (!serial.IsValid)
             {
-                throw new RunTimeError($"{command} - Invalid serial");
+                throw new RunTimeError($"LiftItem - Invalid serial");
             }
 
-            ushort amount = 1;
-
-            if (vars.Length == 2)
-            {
-                amount = Utility.ToUInt16(vars[1].AsString(), 1);
-            }
+            ushort amount = Amount;
 
             if (_lastLiftId > 0)
             {
@@ -674,7 +890,7 @@ namespace Assistant.Scripts
                 }
                 else
                 {
-                    CommandHelper.SendWarning(command, "Item not found or out of range", quiet);
+                    CommandHelper.SendWarning("LiftItem", "Item not found or out of range", quiet);
                     return true;
                 }
             }
@@ -682,31 +898,44 @@ namespace Assistant.Scripts
             return false;
         }
 
-        private static int _lastLiftTypeId;
+        private static bool LiftItem(string command, Variable[] vars, bool quiet, bool force)
+        {
+            if (vars.Length < 1)
+            {
+                throw new RunTimeError("Usage: lift (serial) [amount]");
+            }
+
+            Serial serial = vars[0].AsSerial();
+
+            if (!serial.IsValid)
+            {
+                throw new RunTimeError($"{command} - Invalid serial");
+            }
+
+            ushort amount = 1;
+
+            if (vars.Length == 2)
+            {
+                amount = Utility.ToUInt16(vars[1].AsString(), 1);
+            }
+
+            return LiftItem(serial, amount, quiet, force);
+        }
 
         private static bool LiftType(string command, Variable[] vars, bool quiet, bool force)
         {
             if (vars.Length < 1)
             {
-                throw new RunTimeError("Usage: lifttype (gfx/'name of item') [amount] [hue]");
+                throw new RunTimeError("Usage: lifttype (gfx/'name of item') [amount]");
             }
 
             string gfxStr = vars[0].AsString();
             ushort gfx = Utility.ToUInt16(gfxStr, 0);
             ushort amount = 1;
-            int hue = -1;
 
-            if (vars.Length > 1)
+            if (vars.Length == 2)
             {
-                if (vars.Length == 2)
-                {
-                    amount = Utility.ToUInt16(vars[1].AsString(), 1);
-                }
-
-                if (vars.Length == 3)
-                {
-                    hue = Utility.ToUInt16(vars[2].AsString(), 0);
-                }
+                amount = Utility.ToUInt16(vars[1].AsString(), 1);
             }
 
             if (_lastLiftTypeId > 0)
@@ -726,14 +955,14 @@ namespace Assistant.Scripts
             }
             else
             {
-                List<Item> items = new List<Item>();
+                Item item;
 
                 // No graphic id, maybe searching by name?
                 if (gfx == 0)
                 {
-                    items = World.Player.Backpack.FindItemsByName(gfxStr, true);
+                    item = World.Player.Backpack?.FindItemByName(gfxStr, true);
 
-                    if (items.Count == 0)
+                    if (item == null)
                     {
                         CommandHelper.SendWarning(command, $"Item '{gfxStr}' not found", quiet);
                         return true;
@@ -741,18 +970,11 @@ namespace Assistant.Scripts
                 }
                 else
                 {
-                    items = World.Player.Backpack.FindItemsById(gfx);
+                    item = World.Player.Backpack?.FindItemByID(gfx);
                 }
 
-                if (hue > -1)
+                if (item != null)
                 {
-                    items.RemoveAll(item => item.Hue != hue);
-                }
-
-                if (items.Count > 0)
-                {
-                    Item item = items[Utility.Random(items.Count)];
-
                     if (item.Amount < amount)
                         amount = item.Amount;
 
@@ -821,37 +1043,12 @@ namespace Assistant.Scripts
             return true;
         }
 
-        private static char[] _digits = new[] { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
-
         private static bool Pause(string command, Variable[] vars, bool quiet, bool force)
         {
             if (vars.Length == 0)
-                throw new RunTimeError("Usage: wait (timeout) [shorthand]");
+                throw new RunTimeError("Usage: pause/wait (timeout)");
 
-            uint timeout = vars[0].AsUInt();
-
-            if (vars.Length == 2)
-            {
-                switch (vars[1].AsString())
-                {
-                    case "s":
-                    case "sec":
-                    case "secs":
-                    case "second":
-                    case "seconds":
-                        timeout *= 1000;
-                        break;
-                    case "m":
-                    case "min":
-                    case "mins":
-                    case "minute":
-                    case "minutes":
-                        timeout *= 60000;
-                        break;
-                }
-            }
-
-            Interpreter.Pause(timeout);
+            Interpreter.Pause(vars[0].AsUInt());
 
             return true;
         }
@@ -962,8 +1159,6 @@ namespace Assistant.Scripts
             return true;
         }
 
-        private static DressList _lastDressList;
-
         private static bool DressCommand(string command, Variable[] vars, bool quiet, bool force)
         {
             if (vars.Length == 0)
@@ -993,10 +1188,6 @@ namespace Assistant.Scripts
 
             return false;
         }
-
-        private static DressList _lastUndressList;
-        private static bool _undressAll;
-        private static bool _undressLayer;
 
         private static bool UnDressCommand(string command, Variable[] vars, bool quiet, bool force)
         {
@@ -1154,19 +1345,6 @@ namespace Assistant.Scripts
 
             return true;
         }
-
-        private static readonly Dictionary<string, ushort> PotionList = new Dictionary<string, ushort>()
-        {
-            {"heal", 3852},
-            {"cure", 3847},
-            {"refresh", 3851},
-            {"nightsight", 3846},
-            {"ns", 3846},
-            {"explosion", 3853},
-            {"strength", 3849},
-            {"str", 3849},
-            {"agility", 3848}
-        };
 
         private static bool Potion(string command, Variable[] vars, bool quiet, bool force)
         {

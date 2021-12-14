@@ -116,7 +116,7 @@ namespace Assistant.Scripts
 
             if (vars.Length < 1)
             {
-                throw new RunTimeError("Usage: targettype ('name of item or mobile type'/'graphicId') [inrangecheck (true/false)/backpack] [hue]");
+                throw new RunTimeError("Usage: targettype (graphic) OR ('name of item or mobile type') [inrangecheck/backpack]");
             }
 
             string gfxStr = vars[0].AsString();
@@ -126,15 +126,9 @@ namespace Assistant.Scripts
 
             bool inRangeCheck = false;
             bool backpack = false;
-            int hue = -1;
 
-            if (vars.Length > 1)
+            if (vars.Length == 2)
             {
-                if (vars.Length == 3)
-                {
-                    hue = vars[2].AsInt();
-                }
-
                 if (vars[1].AsString().IndexOf("pack", StringComparison.OrdinalIgnoreCase) != -1)
                 {
                     backpack = true;
@@ -148,7 +142,7 @@ namespace Assistant.Scripts
             // No graphic id, maybe searching by name?
             if (gfx == 0)
             {
-                items = CommandHelper.GetItemsByName(gfxStr, backpack, inRangeCheck, hue);
+                items = CommandHelper.GetItemsByName(gfxStr, backpack, inRangeCheck);
 
                 if (items.Count == 0) // no item found, search mobile by name
                 {
@@ -159,7 +153,7 @@ namespace Assistant.Scripts
             {
                 ushort id = Utility.ToUInt16(gfxStr, 0);
 
-                items = CommandHelper.GetItemsById(id, backpack, inRangeCheck, hue);
+                items = CommandHelper.GetItemsById(id, backpack, inRangeCheck);
 
                 // Still no item? Mobile check!
                 if (items.Count == 0)

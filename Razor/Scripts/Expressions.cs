@@ -73,6 +73,7 @@ namespace Assistant.Scripts
 
             Interpreter.RegisterExpressionHandler("varexist", VarExist);
             Interpreter.RegisterExpressionHandler("varexists", VarExist);
+            Interpreter.RegisterExpressionHandler("complocalvars", CompLocalVars);
         }
 
         private static bool VarExist(string expression, Variable[] vars, bool quiet, bool force)
@@ -116,7 +117,7 @@ namespace Assistant.Scripts
         {
             if (vars.Length == 0)
             {
-                throw new RunTimeError("Usage: findtype ('name of item'/'graphicID) [inrangecheck (true/false)/backpack] [hue]");
+                throw new RunTimeError("Usage: findtype ('name of item') OR (graphicID) [inrangecheck (true/false)/backpack]");
             }
 
             string gfxStr = vars[0].AsString();
@@ -126,15 +127,9 @@ namespace Assistant.Scripts
 
             bool inRangeCheck = false;
             bool backpack = false;
-            int hue = -1;
 
-            if (vars.Length > 1)
+            if (vars.Length == 2)
             {
-                if (vars.Length == 3)
-                {
-                    hue = vars[2].AsInt();
-                }
-
                 if (vars[1].AsString().IndexOf("pack", StringComparison.OrdinalIgnoreCase) > 0)
                 {
                     backpack = true;
@@ -148,7 +143,7 @@ namespace Assistant.Scripts
             // No graphic id, maybe searching by name?
             if (gfx == 0)
             {
-                items = CommandHelper.GetItemsByName(gfxStr, backpack, inRangeCheck, hue);
+                items = CommandHelper.GetItemsByName(gfxStr, backpack, inRangeCheck);
 
                 if (items.Count == 0) // no item found, search mobile by name
                 {
@@ -168,7 +163,7 @@ namespace Assistant.Scripts
             {
                 ushort id = Utility.ToUInt16(gfxStr, 0);
 
-                items = CommandHelper.GetItemsById(id, backpack, inRangeCheck, hue);
+                items = CommandHelper.GetItemsById(id, backpack, inRangeCheck);
 
                 // Still no item? Mobile check!
                 if (items.Count == 0)
@@ -342,35 +337,20 @@ namespace Assistant.Scripts
         private static int CountExpression(string expression, Variable[] vars, bool quiet, bool force)
         {
             if (vars.Length < 1)
-                throw new RunTimeError("Usage: count ('name of counter') OR count ('name of item' OR graphicID) [hue]");
+                throw new RunTimeError("Usage: count ('name of counter item')");
 
             if (World.Player == null)
                 return 0;
 
-            var counter = Counter.FindCounter(vars[0].AsString());
-            if (counter != null)
+            foreach (Counter c in Counter.List)
             {
-                return counter.Amount;
+                if (c.Name.Equals(vars[0].AsString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return c.Enabled ? c.Amount : 0;
+                }
             }
 
-            string gfxStr = vars[0].AsString();
-            Serial gfx = Utility.ToUInt16(gfxStr, 0);
-            ushort hue = 0xFFFF;
-
-            if (vars.Length == 2)
-            {
-                hue = Utility.ToUInt16(vars[1].AsString(), 0xFFFF);
-            }
-
-            // No graphic id, maybe searching by name?
-            if (gfx == 0)
-            {
-                var items = CommandHelper.GetItemsByName(gfxStr, true, false, -1);
-                
-                return items.Count == 0 ? 0 : Counter.GetCount(items[0].ItemID, hue);
-            }
-
-            return Counter.GetCount(new ItemID((ushort)gfx.Value), hue);
+            throw new RunTimeError($"Counter '{vars[0].AsString()}' doesn't exist. Set it up in Razor under Display->Counters.");
         }
 
         private static bool Position(string expression, Variable[] vars, bool quiet, bool force)
@@ -392,6 +372,34 @@ namespace Assistant.Scripts
             return World.Player.Position.X == x
                 && World.Player.Position.Y == y
                 && World.Player.Position.Z == z;
+        }
+
+
+        /// <summary>
+        /// Compare Local Variables
+        /// </summary>
+        /// <param name="command"></param>
+        /// <param name="vars"></param>
+        /// <param name="quiet"></param>
+        /// <param name="force"></param>
+        /// <returns></returns>
+        private static bool CompLocalVars(string command, Variable[] vars, bool quiet, bool force)
+        {
+            bool Returnable = false;
+            string Key1 = vars[0].AsString();
+            string Key2 = vars[1].AsString();
+
+            // Make sure local vars exist
+            if (Commands.LocalVariables.ContainsKey(Key1) && Commands.LocalVariables.ContainsKey(Key2))
+            {
+                // 
+                if (Commands.LocalVariables[Key1] == Commands.LocalVariables[Key2])
+                {
+                    Returnable = true;
+                }
+            }
+
+            return Returnable;
         }
     }
 }

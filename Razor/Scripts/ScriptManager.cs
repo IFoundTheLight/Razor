@@ -321,6 +321,16 @@ namespace Assistant.Scripts
             Interpreter.ResumeScript();
         }
 
+        public static RazorScript UpdateScript(string file)
+        {
+            RazorScript CurrentScript = _scriptList.FirstOrDefault(x => x.Path == file);
+
+            CurrentScript.Lines = File.ReadAllLines(file);
+            CurrentScript.Name = Path.GetFileNameWithoutExtension(file);
+
+            return CurrentScript;
+        }
+
         public static RazorScript AddScript(string file)
         {
             RazorScript script = new RazorScript
@@ -637,15 +647,15 @@ namespace Assistant.Scripts
 
             string[] commands =
             {
-                "alliance", "clearall", "cleardragdrop", "clearhands", "emote", "guild", "attack", "interrupt", "virtue", "yell",
-                "cast", "dclick", "dclicktype",
-                "dress", "drop", "droprelloc", "gumpresponse", "gumpclose", "hotkey", "lasttarget", "lift", "lifttype",
-                "menu", "menuresponse", "organizer", "overhead", "potion", "promptresponse", "restock", "say",
-                "whisper", "yell", "emote", "script", "scavenger", "sell", "setability", "setlasttarget", "setvar",
-                "skill", "sysmsg", "target", "targettype", "targetrelloc", "undress", "useonce", "walk", "wait",
-                "pause", "waitforgump", "waitformenu", "waitforprompt", "waitfortarget", "waitforsysmsg", "clearsysmsg", "clearjournal",
-                "waitforsysmsg", "random"
-            };
+                    "attack", "cast", "dclick", "dclicktype", "dress", "drop", "droprelloc", "gumpresponse", "gumpclose",
+                    "hotkey", "lasttarget", "lift", "lifttype", "menu", "menuresponse", "organizer", "overhead", "potion",
+                    "promptresponse", "restock", "say", "whisper", "yell", "emote", "script", "scavenger", "sell", "setability",
+                    "setlasttarget",
+                    "setvar", "skill", "sysmsg", "target", "targettype", "targetrelloc", "undress", "useonce", "walk",
+                    "wait", "pause", "waitforgump", "waitformenu", "waitforprompt", "waitfortarget", "clearsysmsg", "clearjournal",
+                    "waitforsysmsg", "clearhands", "clearall", "virtue", "random"
+
+                };
 
             #endregion
 
@@ -680,7 +690,7 @@ namespace Assistant.Scripts
             tooltip = new ToolTipDescriptions("dclicktype",
                 new[]
                 {
-                        "dclicktype ('name of item') OR (graphicID) [inrange] or usetype ('name of item') OR (graphicID) [inrange/backpack] [hue]"
+                        "dclicktype ('name of item') OR (graphicID) [inrange] or usetype ('name of item') OR (graphicID) [inrange]"
                 }, "N/A",
                 "This command will use (double-click) an item type either provided by the name or the graphic ID.\n\t\tIf you include the optional true parameter, items within range (2 tiles) will only be considered.",
                 "dclicktype 'dagger'\n\t\twaitfortarget\n\t\ttargettype 'robe'");
@@ -728,7 +738,7 @@ namespace Assistant.Scripts
             descriptionCommands.Add("lift", tooltip);
 
             tooltip = new ToolTipDescriptions("lifttype",
-                new[] { "lifttype (gfx) [amount] or lifttype ('name of item') [amount] [hue]" }, "N/A",
+                new[] { "lifttype (gfx) [amount] or lifttype ('name of item') [amount]" }, "N/A",
                 "This command will lift a specific item by type either by the graphic id or by the name.\n\tIf no amount is provided, 1 is defaulted.",
                 "lifttype 'robe'\n\twait 1000\n\tdroprelloc 1 1 0\n\tlifttype 0x1FCD\n\twait 1000\n\tdroprelloc 1 1");
             descriptionCommands.Add("lifttype", tooltip);
@@ -834,7 +844,7 @@ namespace Assistant.Scripts
             descriptionCommands.Add("target", tooltip);
 
             tooltip = new ToolTipDescriptions("targettype",
-                new[] { "targettype (graphic) or targettype ('name of item or mobile type') [inrangecheck/backpack] [hue]" }, "N/A",
+                new[] { "targettype (graphic) or targettype ('name of item or mobile type') [inrangecheck]" }, "N/A",
                 "This command will target a specific type of mobile or item based on the graphic id or based on\n\tthe name of the item or mobile. If the optional parameter is passed\n\tin as true only items within the range of 2 tiles will be considered.",
                 "usetype 'dagger'\n\twaitfortarget\n\ttargettype 'robe'\n\tuseobject 0x4005ECAF\n\twaitfortarget\n\ttargettype 0x1f03\n\tuseobject 0x4005ECAF\n\twaitfortarget\n\ttargettype 0x1f03 true");
             descriptionCommands.Add("targettype", tooltip);
@@ -1116,13 +1126,16 @@ namespace Assistant.Scripts
         {
             try
             {
-                var razorFiles = Directory.GetFiles(path, "*.razor");
+                // Get All Script Files
+                string[] razorFiles = Directory.GetFiles(path, "*.razor");
                 razorFiles = razorFiles.OrderBy(fileName => fileName).ToArray();
 
-                foreach (var file in razorFiles)
+                // Loop over script files in directory
+                foreach (string file in razorFiles)
                 {
                     RazorScript script = null;
 
+                    // Check if file already loaded
                     foreach (RazorScript razorScript in _scriptList)
                     {
                         if (razorScript.Path.Equals(file))
@@ -1131,11 +1144,17 @@ namespace Assistant.Scripts
                         }
                     }
 
+                    // If script isn't loaded add new one
                     if (script == null)
                     {
                         script = AddScript(file);
                     }
+                    else
+                    {
+                        script = UpdateScript(file);
+                    }
 
+                    //
                     if (nodes != null)
                     {
                         TreeNode node = new TreeNode(script.Name)
